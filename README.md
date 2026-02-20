@@ -29,6 +29,17 @@ pip install -e .
 | `ALLURE_PROJECT_ID` | ID проекта (например, `211`) |
 | `ALLURE_CLI_ROOT` | Каталог, в котором лежит пакет `allure_cli` (по умолчанию `$HOME/apps`). Нужен для запуска через `run.sh` из любой директории. |
 
+**Постоянно (zsh/bash):** добавьте в `~/.zshrc` или `~/.bashrc` и перезапустите терминал (или выполните `source ~/.zshrc` / `source ~/.bashrc`):
+
+```bash
+# Allure TestOps CLI
+export ALLURE_ENDPOINT="https://allure-testops.yandex-team.ru"
+export ALLURE_PROJECT_ID="211"
+export ALLURE_TOKEN="<ваш_токен>"
+```
+
+Подставьте свой URL, ID проекта и токен. После этого вызывать `allure_cli` можно без `export` в каждой сессии.
+
 ## Запуск
 
 **Вариант 1 — после установки (`pip install -e .`):** команда `allure_cli` доступна из любой директории:

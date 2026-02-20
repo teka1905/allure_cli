@@ -24,7 +24,7 @@ pip install -e .
 
 | Переменная | Описание |
 |------------|----------|
-| `ALLURE_ENDPOINT` или `ALLURE_TESTOPS_URL` | Базовый URL Allure TestOps (например, `https://allure-testops.yandex-team.ru`) |
+| `ALLURE_ENDPOINT` или `ALLURE_TESTOPS_URL` | Базовый URL Allure TestOps (например, `https://allure-testops.example.com`) |
 | `ALLURE_TOKEN` | API-токен (создаётся в Allure: профиль → API Tokens) |
 | `ALLURE_PROJECT_ID` | ID проекта (например, `211`) |
 | `ALLURE_CLI_ROOT` | Каталог, в котором лежит пакет `allure_cli` (по умолчанию `$HOME/apps`). Нужен для запуска через `run.sh` из любой директории. |
@@ -33,9 +33,9 @@ pip install -e .
 
 ```bash
 # Allure TestOps CLI
-export ALLURE_ENDPOINT="https://allure-testops.yandex-team.ru"
-export ALLURE_PROJECT_ID="211"
-export ALLURE_TOKEN="<ваш_токен>"
+export ALLURE_ENDPOINT="https://allure-testops.example.com"
+export ALLURE_PROJECT_ID="YOUR_PROJECT_ID"
+export ALLURE_TOKEN="<YOUR_TOKEN>"
 ```
 
 Подставьте свой URL, ID проекта и токен. После этого вызывать `allure_cli` можно без `export` в каждой сессии.
@@ -45,7 +45,7 @@ export ALLURE_TOKEN="<ваш_токен>"
 **Вариант 1 — после установки (`pip install -e .`):** команда `allure_cli` доступна из любой директории:
 
 ```bash
-export ALLURE_ENDPOINT=https://allure-testops.yandex-team.ru
+export ALLURE_ENDPOINT=https://allure-testops.example.com
 export ALLURE_PROJECT_ID=211
 export ALLURE_TOKEN=<ваш_токен>
 
@@ -75,7 +75,7 @@ allure_cli "Автоответ в чат"
 allure_cli -q "Автоответ в чат"
 
 # Параметры через аргументы
-allure_cli --url https://allure-testops.yandex-team.ru --project 211 --token $ALLURE_TOKEN "запрос"
+allure_cli --url https://allure-testops.example.com --project 211 --token $ALLURE_TOKEN "запрос"
 ```
 
 Вывод (обычный режим): `id` и название тест-кейса; при наличии — `fullName` со следующей строки. Значение **id** — это Allure ID для декоратора `AllureID("...")` в коде тестов.

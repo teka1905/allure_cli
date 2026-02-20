@@ -1,0 +1,1 @@
+# No dependencies — uses Python stdlib only (urllib, json, argparse).

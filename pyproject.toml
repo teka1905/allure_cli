@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "allure-cli"
+version = "0.1.0"
+description = "CLI для Allure TestOps: получение Allure ID тест-кейса по названию"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+allure_cli = "allure_cli.cli:main"

@@ -83,3 +83,5 @@ allure_cli --url https://allure-testops.yandex-team.ru --project 211 --token $AL
 ## Авторизация
 
 Используется схема из [документации ТестОпс](https://docs.qatools.ru/api): API-токен обменивается на JWT через `POST /api/uaa/oauth/token`, далее запросы к API — с заголовком `Authorization: Bearer <jwt>`.
+
+JWT кэшируется на диск (`~/.cache/allure_cli/` или `$XDG_CACHE_HOME/allure_cli/`), чтобы не запрашивать новый токен при каждом вызове. При ответе 401 от API кэш сбрасывается и токен запрашивается заново автоматически.

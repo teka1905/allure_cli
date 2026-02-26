@@ -4,10 +4,31 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "allure-cli"
-version = "0.1.0"
+version = "0.1.1"
 description = "CLI для Allure TestOps: получение Allure ID тест-кейса по названию"
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    {name = "Allure CLI Contributors"}
+]
+keywords = ["allure", "testops", "testing", "qa", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/adolmatov/allure_cli"
+Repository = "https://github.com/adolmatov/allure_cli"
+"Bug Tracker" = "https://github.com/adolmatov/allure_cli/issues"
 
 [project.scripts]
 allure_cli = "allure_cli.cli:main"

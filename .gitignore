@@ -24,3 +24,11 @@ env/
 # Env (если будут хранить токены в .env)
 .env
 .env.local
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# PyPI
+.pypirc

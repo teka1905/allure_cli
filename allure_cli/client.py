@@ -484,22 +484,37 @@ def find_orphaned_tests(
     # Parse dates and calculate inactive days
     now = datetime.now(timezone.utc)
     for case in all_cases:
-        updated = case.get("updatedDate")
-        if updated:
+        # Prefer lastModifiedDate, fall back to createdDate
+        ts = case.get("lastModifiedDate") or case.get("createdDate")
+        if ts:
             try:
                 # Allure returns timestamps in milliseconds
-                updated_dt = datetime.fromtimestamp(updated / 1000, tz=timezone.utc)
-                case["_days_inactive"] = (now - updated_dt).days
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                case["_days_inactive"] = (now - dt).days
             except (ValueError, TypeError):
                 case["_days_inactive"] = 0
         else:
             case["_days_inactive"] = 0
     
-    # Find inactive tests
-    inactive = [c for c in all_cases if c["_days_inactive"] >= days_threshold]
+    # Find inactive tests (days_threshold=0 means no filtering)
+    if days_threshold > 0:
+        inactive = [c for c in all_cases if c["_days_inactive"] >= days_threshold]
+    else:
+        inactive = all_cases
     
     orphaned = []
     
+    # If no similarity filtering requested, just return inactive tests
+    if similarity_threshold <= 0:
+        for old_test in inactive:
+            orphaned.append({
+                "old_test": old_test,
+                "similar_tests": [],
+                "days_inactive": old_test["_days_inactive"],
+            })
+        return orphaned
+    
+    # O(n²) similarity comparison — only when similarity is requested
     for old_test in inactive:
         old_name = old_test.get("name", "")
         old_full = old_test.get("fullName", "")
@@ -517,9 +532,13 @@ def find_orphaned_tests(
             other_text = f"{other_name} {other_full}"
             
             # Calculate similarity on name
-            name_sim = similarity_ratio(old_name, other_name, normalize=normalize_names)
+            name_sim = similarity_ratio(
+                old_name, other_name, normalize=normalize_names
+            )
             # Calculate similarity on full name
-            full_sim = similarity_ratio(old_text, other_text, normalize=normalize_names)
+            full_sim = similarity_ratio(
+                old_text, other_text, normalize=normalize_names
+            )
             # Use max similarity
             max_sim = max(name_sim, full_sim)
             

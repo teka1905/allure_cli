@@ -497,46 +497,48 @@ def _find_orphaned_command(args) -> int:
     
     c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
     
-    print(f"\n{c.BOLD}{c.YELLOW}Found {len(orphaned)} potentially orphaned test(s):{c.RESET}\n", file=sys.stderr)
+    label = "inactive" if not any(item["similar_tests"] for item in orphaned) else "potentially orphaned"
+    print(f"\n{c.BOLD}{c.YELLOW}Found {len(orphaned)} {label} test(s):{c.RESET}\n", file=sys.stderr)
     
     for i, item in enumerate(orphaned, 1):
         old = item["old_test"]
         days = item["days_inactive"]
         
-        print(f"{c.BOLD}{i}.{c.RESET} Test ID {c.RED}{c.BOLD}{old['id']}{c.RESET} {c.DIM}(inactive for {c.YELLOW}{days}{c.RESET}{c.DIM} days){c.RESET}")
-        print(f"   {c.CYAN}Name:{c.RESET} {old.get('name', 'N/A')}")
+        print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{old['id']}{c.RESET}"
+              f"\t{c.CYAN}{old.get('name', 'N/A')}{c.RESET}"
+              f" {c.DIM}({c.YELLOW}{days}{c.RESET}{c.DIM} days){c.RESET}")
         if old.get("fullName") and old["fullName"] != old.get("name"):
-            print(f"   {c.DIM}Full: {old['fullName']}{c.RESET}")
+            print(f"   {c.DIM}└─ {old['fullName']}{c.RESET}")
         
-        print(f"   {c.MAGENTA}Similar tests found:{c.RESET}")
-        for sim_item in item["similar_tests"][:3]:  # Show top 3
-            sim_test = sim_item["test"]
-            sim_score = sim_item["similarity"]
-            sim_days = sim_test.get("_days_inactive", 0)
+        if item["similar_tests"]:
+            print(f"   {c.MAGENTA}Similar tests:{c.RESET}")
+            for sim_item in item["similar_tests"][:3]:
+                sim_test = sim_item["test"]
+                sim_score = sim_item["similarity"]
+                sim_days = sim_test.get("_days_inactive", 0)
+                
+                if sim_score >= 0.9:
+                    sim_color = c.GREEN
+                elif sim_score >= 0.75:
+                    sim_color = c.YELLOW
+                else:
+                    sim_color = c.RED
+                
+                if sim_days < 7:
+                    days_color = c.GREEN
+                elif sim_days < 30:
+                    days_color = c.YELLOW
+                else:
+                    days_color = c.RED
+                
+                print(f"      {c.DIM}•{c.RESET} ID {c.BLUE}{sim_test['id']}{c.RESET} "
+                      f"{c.DIM}({sim_color}{sim_score:.2f}{c.RESET}{c.DIM}, "
+                      f"{days_color}{sim_days}{c.RESET}{c.DIM}d){c.RESET} "
+                      f"{c.DIM}{sim_test.get('name', 'N/A')}{c.RESET}")
             
-            # Color code similarity: high=green, medium=yellow, low=red
-            if sim_score >= 0.9:
-                sim_color = c.GREEN
-            elif sim_score >= 0.75:
-                sim_color = c.YELLOW
-            else:
-                sim_color = c.RED
-            
-            # Color code days: fresh=green, medium=yellow, old=red
-            if sim_days < 7:
-                days_color = c.GREEN
-            elif sim_days < 30:
-                days_color = c.YELLOW
-            else:
-                days_color = c.RED
-            
-            print(f"      {c.DIM}•{c.RESET} ID {c.BLUE}{sim_test['id']}{c.RESET} "
-                  f"{c.DIM}(similarity: {sim_color}{sim_score:.2f}{c.RESET}{c.DIM}, "
-                  f"inactive: {days_color}{sim_days}{c.RESET}{c.DIM} days){c.RESET}")
-            print(f"        {c.DIM}{sim_test.get('name', 'N/A')}{c.RESET}")
-        
-        if len(item["similar_tests"]) > 3:
-            print(f"      {c.DIM}... and {len(item['similar_tests']) - 3} more similar test(s){c.RESET}")
+            if len(item["similar_tests"]) > 3:
+                extra = len(item["similar_tests"]) - 3
+                print(f"      {c.DIM}... and {extra} more{c.RESET}")
         print()
     
     # Interactive deletion

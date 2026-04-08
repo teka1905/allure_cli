@@ -40,12 +40,15 @@ export ALLURE_TOKEN="<YOUR_TOKEN>"
 
 ## Использование
 
-CLI поддерживает две команды:
+CLI поддерживает четыре команды:
 
 1. **`search`** (по умолчанию) — поиск тест-кейсов по ID или названию
 2. **`find-orphaned`** — поиск осиротевших (устаревших) тестов
+3. **`delete`** — удаление тест-кейсов по ID из CSV файла
+4. **`create`** — создание новых тест-кейсов из CSV или JSON файла
 
 **Справка:**
+
 ```bash
 # Общая справка
 allure_cli
@@ -57,6 +60,12 @@ allure_cli search --help
 
 # Справка по команде find-orphaned
 allure_cli find-orphaned --help
+
+# Справка по команде delete
+allure_cli delete --help
+
+# Справка по команде create
+allure_cli create --help
 ```
 
 ### Команда `search` (поиск тестов)
@@ -97,11 +106,13 @@ allure_cli search --url https://allure-testops.example.com --project 211 --token
 ```
 
 **Вывод:**
+
 - В обычном режиме: номер, ID (синий), название (циан), и fullName (серый) если отличается
 - Результаты с цветной подсветкой для лучшей читаемости
 - В quiet режиме (`-q`): только ID, по одному на строку (без цветов)
 
 **Пример вывода:**
+
 ```
 Found 3 test cases:
 
@@ -114,6 +125,7 @@ Found 3 test cases:
 ```
 
 Где:
+
 - `12345`, `12389`, `12401` — синий, жирный (ID)
 - `User login...` — циан (название)
 - `tests.auth...` — серый (fullName)
@@ -127,6 +139,7 @@ Found 3 test cases:
 **Проблема:** Когда в автотестах меняется название шагов или имя сценария, Allure генерирует новый ID. В БД остаётся старый тест, который больше не выполняется и не поддерживается.
 
 **Решение:** Команда `find-orphaned` ищет такие тесты по двум критериям:
+
 1. Тест не обновлялся N дней (по умолчанию 30)
 2. Есть другие тесты с похожими названиями (similarity >= 0.75)
 
@@ -164,6 +177,7 @@ allure_cli find-orphaned --delete
 **Цветной вывод:**
 
 По умолчанию результаты выводятся с цветами для лучшей читаемости:
+
 - 🔴 **Красный** — осиротевшие тесты (кандидаты на удаление)
 - 🟢 **Зелёный** — высокая схожесть (≥0.9) или свежие тесты (<7 дней)
 - 🟡 **Жёлтый** — средняя схожесть (0.75-0.9) или средний возраст (7-30 дней)
@@ -172,6 +186,7 @@ allure_cli find-orphaned --delete
 - ⚪ **Серый** — второстепенная информация
 
 Цвета автоматически отключаются при:
+
 - Перенаправлении вывода в файл
 - Переменной окружения `NO_COLOR`
 - Флаге `--no-color`
@@ -184,7 +199,139 @@ allure_cli find-orphaned --no-color
 NO_COLOR=1 allure_cli find-orphaned
 ```
 
+### Команда `delete` (удаление тестов)
+
+Удаляет тест-кейсы по ID из CSV файла. Поддерживает форматы CSV с разделителями ',' или ';'.
+
+**Пример CSV файла:**
+
+```
+id,name
+12345,Test case 1
+12346,Test case 2
+```
+
+**Использование:**
+
+```bash
+# Удалить тест-кейсы из CSV файла
+allure_cli delete --file test_cases.csv
+
+# Удалить тест-кейсы без подтверждения (опасно!)
+allure_cli delete --file test_cases.csv --yes
+
+# Удалить тест-кейсы и показать подробный вывод
+allure_cli delete --file test_cases.csv --verbose
+
+# Удалить тест-кейсы без получения их деталей (быстрее)
+allure_cli delete --file test_cases.csv --no-fetch
+```
+
+**Параметры:**
+
+| Параметр | Описание | По умолчанию |
+|----------|----------|--------------|
+| `--file` | Путь к CSV файлу с ID тестов | Обязательный |
+| `--yes` | Пропустить подтверждение удаления | false |
+| `--verbose` | Показать подробный вывод | false |
+| `--no-fetch` | Не получать детали тестов перед удалением | false |
+| `--no-color` | Отключить цветной вывод | false |
+
+**Интерактивное подтверждение:**
+Команда по умолчанию запрашивает подтверждение перед удалением каждого теста:
+
+- `y` — удалить тест
+- `n` — пропустить
+- `q` — завершить
+
+**Пример вывода:**
+
+```
+Found 2 test case(s) in CSV file:
+1. ID 12345 - Test case 1
+2. ID 12346 - Test case 2
+
+Delete these test cases? [y/N]: y
+
+Deleting test cases...
+[1/2] Test case 12345: deleted
+[2/2] Test case 12346: deleted
+
+Successfully deleted 2 test case(s)
+```
+
+### Команда `create` (создание тестов)
+
+Создает новые тест-кейсы из CSV или JSON файла.
+
+**Пример CSV файла:**
+
+```
+name,description,tags
+"New test case 1","Description for test case 1","tag1;tag2"
+"New test case 2","Description for test case 2","tag3"
+```
+
+**Пример JSON файла:**
+
+```json
+[
+  {
+    "name": "New test case 1",
+    "description": "Description for test case 1",
+    "tags": ["tag1", "tag2"]
+  },
+  {
+    "name": "New test case 2",
+    "description": "Description for test case 2",
+    "tags": ["tag3"]
+  }
+]
+```
+
+**Использование:**
+
+```bash
+# Создать тест-кейсы из CSV файла
+allure_cli create --file test_cases.csv
+
+# Создать тест-кейсы из JSON файла
+allure_cli create --file test_cases.json
+
+# Создать тест-кейсы с дополнительными тегами
+allure_cli create --file test_cases.csv --tag "new" --tag "automated"
+
+# Создать тест-кейсы и показать подробный вывод
+allure_cli create --file test_cases.csv --verbose
+```
+
+**Параметры:**
+
+| Параметр | Описание | По умолчанию |
+|----------|----------|--------------|
+| `--file` | Путь к CSV или JSON файлу | Обязательный |
+| `--tag` | Дополнительные теги для всех тестов | [] |
+| `--verbose` | Показать подробный вывод | false |
+| `--no-color` | Отключить цветной вывод | false |
+
+**Интерактивный процесс:**
+Команда показывает прогресс создания каждого теста:
+
+- `✓` — успешно создан
+- `✗` — ошибка при создании
+
+**Пример вывода:**
+
+```
+Creating test cases from test_cases.csv...
+[1/2] New test case 1: created (ID: 12347)
+[2/2] New test case 2: created (ID: 12348)
+
+Successfully created 2 test case(s)
+```
+
 **Логика работы флагов:**
+
 - Без флагов: применяются оба критерия (`--days 30 --similarity 0.75`)
 - Только `--days N`: ищет тесты неактивные N+ дней (без проверки схожести)
 - Только `--similarity X`: ищет тесты с похожими названиями (без проверки неактивности)
@@ -193,6 +340,7 @@ NO_COLOR=1 allure_cli find-orphaned
 **Умная нормализация названий:**
 
 По умолчанию включена нормализация названий для более точного поиска дубликатов. Удаляется "шум":
+
 - **Даты**: `2024-01-15`, `15/01/2024`, `20240115`
 - **Временные метки**: `14:30:45`, Unix timestamps
 - **Версии**: `v1.2.3`, `version 2`
@@ -200,6 +348,7 @@ NO_COLOR=1 allure_cli find-orphaned
 - **Стоп-слова**: `test`, `check`, `verify`, `should`, `when`, `then`, `given`
 
 **Примеры:**
+
 ```
 Оригинал: "Test [TC-123] User login verification 2024-01-15"
 Нормализованное: "user login"
@@ -211,6 +360,7 @@ NO_COLOR=1 allure_cli find-orphaned
 ```
 
 Чтобы отключить нормализацию (сравнивать названия как есть):
+
 ```bash
 allure_cli find-orphaned --no-normalize
 ```
@@ -244,6 +394,7 @@ allure_cli find-orphaned --delete
 ```
 
 Для каждого найденного теста будет предложено:
+
 - `y` — удалить тест
 - `n` — пропустить
 - `q` — завершить
@@ -253,3 +404,7 @@ allure_cli find-orphaned --delete
 Используется схема из [документации ТестОпс](https://docs.qatools.ru/api): API-токен обменивается на JWT через `POST /api/uaa/oauth/token`, далее запросы к API — с заголовком `Authorization: Bearer <jwt>`.
 
 JWT кэшируется на диск (`~/.cache/allure_cli/` или `$XDG_CACHE_HOME/allure_cli/`), чтобы не запрашивать новый токен при каждом вызове. При ответе 401 от API кэш сбрасывается и токен запрашивается заново автоматически.
+-e 
+## Репозиторий
+
+Репозиторий проекта был перенесен с `adolmatov/allure_cli` на `teka1905/allure_cli`. Пожалуйста, обновите ваши закладки и ссылки.

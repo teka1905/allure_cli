@@ -26,9 +26,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/adolmatov/allure_cli"
-Repository = "https://github.com/adolmatov/allure_cli"
-"Bug Tracker" = "https://github.com/adolmatov/allure_cli/issues"
+Homepage = "https://github.com/teka1905/allure_cli"
+Repository = "https://github.com/teka1905/allure_cli"
+"Bug Tracker" = "https://github.com/teka1905/allure_cli/issues"
 
 [project.scripts]
 allure_cli = "allure_cli.cli:main"

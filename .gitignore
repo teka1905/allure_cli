@@ -21,7 +21,7 @@ env/
 *.swp
 .DS_Store
 
-# Env (если будут хранить токены в .env)
+# Env (in case tokens end up in .env)
 .env
 .env.local
 

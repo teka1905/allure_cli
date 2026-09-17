@@ -8,20 +8,22 @@ import os
 import sys
 
 from .client import (
+    AuthError,
     bulk_create_test_cases,
     bulk_delete_test_cases,
+    bulk_remove_test_cases,
     create_test_case,
-    delete_test_case,
     find_by_id,
     find_by_name,
     find_orphaned_tests,
-    get_jwt,
     get_test_case_by_id,
 )
+
 
 # ANSI color codes
 class Colors:
     """ANSI color codes for terminal output."""
+
     RED = "\033[91m"
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -32,7 +34,7 @@ class Colors:
     BOLD = "\033[1m"
     DIM = "\033[2m"
     RESET = "\033[0m"
-    
+
     @staticmethod
     def is_enabled() -> bool:
         """Check if colors should be enabled (TTY and not disabled)."""
@@ -53,7 +55,7 @@ def main() -> int:
         description="Get Allure TestOps test case by ID or search by name (substring)."
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
-    
+
     # Search command (default behavior)
     search_parser = subparsers.add_parser(
         "search",
@@ -78,7 +80,11 @@ def main() -> int:
     search_parser.add_argument(
         "--project",
         type=int,
-        default=(int(os.environ["ALLURE_PROJECT_ID"]) if os.environ.get("ALLURE_PROJECT_ID") else None),
+        default=(
+            int(os.environ["ALLURE_PROJECT_ID"])
+            if os.environ.get("ALLURE_PROJECT_ID")
+            else None
+        ),
         help="Project ID (default: ALLURE_PROJECT_ID)",
     )
     search_parser.add_argument(
@@ -88,7 +94,8 @@ def main() -> int:
         help="Max results (default: 50)",
     )
     search_parser.add_argument(
-        "-q", "--quiet",
+        "-q",
+        "--quiet",
         action="store_true",
         help="Print only IDs, one per line",
     )
@@ -97,7 +104,7 @@ def main() -> int:
         action="store_true",
         help="Disable colored output",
     )
-    
+
     # Find orphaned tests command
     orphaned_parser = subparsers.add_parser(
         "find-orphaned",
@@ -116,7 +123,11 @@ def main() -> int:
     orphaned_parser.add_argument(
         "--project",
         type=int,
-        default=(int(os.environ["ALLURE_PROJECT_ID"]) if os.environ.get("ALLURE_PROJECT_ID") else None),
+        default=(
+            int(os.environ["ALLURE_PROJECT_ID"])
+            if os.environ.get("ALLURE_PROJECT_ID")
+            else None
+        ),
         help="Project ID (default: ALLURE_PROJECT_ID)",
     )
     orphaned_parser.add_argument(
@@ -147,11 +158,17 @@ def main() -> int:
         help="Interactively delete found orphaned tests",
     )
     orphaned_parser.add_argument(
-        "-q", "--quiet",
+        "-y", "--yes",
+        action="store_true",
+        help="With --delete: delete every found test without asking",
+    )
+    orphaned_parser.add_argument(
+        "-q",
+        "--quiet",
         action="store_true",
         help="Print only IDs of orphaned tests, one per line",
     )
-    
+
     # Create command
     create_parser = subparsers.add_parser(
         "create",
@@ -164,7 +181,8 @@ def main() -> int:
         help="Test case name (for creating a single test case)",
     )
     create_parser.add_argument(
-        "-d", "--description",
+        "-d",
+        "--description",
         default="",
         help="Description",
     )
@@ -174,13 +192,15 @@ def main() -> int:
         help="Full name / path",
     )
     create_parser.add_argument(
-        "-t", "--tag",
+        "-t",
+        "--tag",
         action="append",
         default=None,
         help="Tag (can be repeated: -t smoke -t regression)",
     )
     create_parser.add_argument(
-        "-f", "--file",
+        "-f",
+        "--file",
         default=None,
         help="Path to file for bulk creation (CSV or JSON)",
     )
@@ -202,7 +222,11 @@ def main() -> int:
     create_parser.add_argument(
         "--project",
         type=int,
-        default=(int(os.environ["ALLURE_PROJECT_ID"]) if os.environ.get("ALLURE_PROJECT_ID") else None),
+        default=(
+            int(os.environ["ALLURE_PROJECT_ID"])
+            if os.environ.get("ALLURE_PROJECT_ID")
+            else None
+        ),
         help="Project ID (default: ALLURE_PROJECT_ID)",
     )
     create_parser.add_argument(
@@ -210,7 +234,7 @@ def main() -> int:
         action="store_true",
         help="Disable colored output",
     )
-    
+
     # Delete command
     delete_parser = subparsers.add_parser(
         "delete",
@@ -223,7 +247,8 @@ def main() -> int:
         help="Test case IDs to delete",
     )
     delete_parser.add_argument(
-        "-f", "--file",
+        "-f",
+        "--file",
         default=None,
         help="Path to file with IDs (plain text: one per line, or CSV with allure_id column)",
     )
@@ -233,7 +258,8 @@ def main() -> int:
         help="Only show what would be deleted, don't actually delete",
     )
     delete_parser.add_argument(
-        "-y", "--yes",
+        "-y",
+        "--yes",
         action="store_true",
         help="Skip confirmation prompt",
     )
@@ -250,7 +276,11 @@ def main() -> int:
     delete_parser.add_argument(
         "--project",
         type=int,
-        default=(int(os.environ["ALLURE_PROJECT_ID"]) if os.environ.get("ALLURE_PROJECT_ID") else None),
+        default=(
+            int(os.environ["ALLURE_PROJECT_ID"])
+            if os.environ.get("ALLURE_PROJECT_ID")
+            else None
+        ),
         help="Project ID (default: ALLURE_PROJECT_ID)",
     )
     delete_parser.add_argument(
@@ -264,13 +294,22 @@ def main() -> int:
         help="Skip fetching test case details (just show IDs)",
     )
     delete_parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Show all test cases (don't truncate long lists)",
     )
-    
-    args = parser.parse_args()
-    
+
+    # Backward compatibility: `allure-cli "query"` means `allure-cli search "query"`.
+    # Without this, argparse rejects the query as an unknown command before the
+    # old-style fallback below gets a chance to run.
+    argv = sys.argv[1:]
+    commands = set(subparsers.choices)
+    if argv and argv[0] not in commands and not argv[0].startswith("-"):
+        argv = ["search"] + argv
+
+    args = parser.parse_args(argv)
+
     # If no command specified, treat as search (backward compatibility)
     if args.command is None:
         # Check if running without any arguments (not even query)
@@ -278,7 +317,7 @@ def main() -> int:
             # No arguments at all - show help
             parser.print_help()
             return 0
-        
+
         # Parse as old-style command
         parser_old = argparse.ArgumentParser(
             description="Get Allure TestOps test case by ID or search by name (substring)."
@@ -302,7 +341,11 @@ def main() -> int:
         parser_old.add_argument(
             "--project",
             type=int,
-            default=(int(os.environ["ALLURE_PROJECT_ID"]) if os.environ.get("ALLURE_PROJECT_ID") else None),
+            default=(
+                int(os.environ["ALLURE_PROJECT_ID"])
+                if os.environ.get("ALLURE_PROJECT_ID")
+                else None
+            ),
             help="Project ID (default: ALLURE_PROJECT_ID)",
         )
         parser_old.add_argument(
@@ -312,7 +355,8 @@ def main() -> int:
             help="Max results (default: 50)",
         )
         parser_old.add_argument(
-            "-q", "--quiet",
+            "-q",
+            "--quiet",
             action="store_true",
             help="Print only IDs, one per line",
         )
@@ -323,7 +367,7 @@ def main() -> int:
         )
         args = parser_old.parse_args()
         args.command = "search"
-    
+
     if args.command == "search":
         return _search_command(args)
     elif args.command == "find-orphaned":
@@ -340,29 +384,44 @@ def main() -> int:
 def _search_command(args) -> int:
     """Handle search command."""
     query = args.query
-    
+
     # If no query provided, show help
     if query is None:
         parser_help = argparse.ArgumentParser(
             prog="allure_cli search",
             description="Search test cases by ID or name",
         )
-        parser_help.add_argument("query", help="Test case ID (number) or search query (substring of test case name)")
-        parser_help.add_argument("--url", help="Allure TestOps base URL (default: ALLURE_ENDPOINT or ALLURE_TESTOPS_URL)")
+        parser_help.add_argument(
+            "query",
+            help="Test case ID (number) or search query (substring of test case name)",
+        )
+        parser_help.add_argument(
+            "--url",
+            help="Allure TestOps base URL (default: ALLURE_ENDPOINT or ALLURE_TESTOPS_URL)",
+        )
         parser_help.add_argument("--token", help="API token (default: ALLURE_TOKEN)")
-        parser_help.add_argument("--project", type=int, help="Project ID (default: ALLURE_PROJECT_ID)")
+        parser_help.add_argument(
+            "--project", type=int, help="Project ID (default: ALLURE_PROJECT_ID)"
+        )
         parser_help.add_argument("--size", type=int, help="Max results (default: 50)")
-        parser_help.add_argument("-q", "--quiet", action="store_true", help="Print only IDs, one per line")
-        parser_help.add_argument("--no-color", action="store_true", help="Disable colored output")
+        parser_help.add_argument(
+            "-q", "--quiet", action="store_true", help="Print only IDs, one per line"
+        )
+        parser_help.add_argument(
+            "--no-color", action="store_true", help="Disable colored output"
+        )
         parser_help.print_help()
         return 0
-    
+
     if not query:
         print("Error: Provide query as argument", file=sys.stderr)
         return 2
 
     if not args.url:
-        print("Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required", file=sys.stderr)
+        print(
+            "Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required",
+            file=sys.stderr,
+        )
         return 2
     if not args.token:
         print("Error: --token or ALLURE_TOKEN required", file=sys.stderr)
@@ -396,9 +455,20 @@ def _search_command(args) -> int:
 
     if not cases:
         if not args.quiet:
-            c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
+            c = (
+                Colors
+                if (Colors.is_enabled() and not args.no_color)
+                else type(
+                    "NoColor",
+                    (),
+                    {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+                )()
+            )
             search_type = "ID" if is_id_search else "name"
-            print(f"{c.YELLOW}No test cases found for {search_type}: {c.BOLD}{query!r}{c.RESET}", file=sys.stderr)
+            print(
+                f"{c.YELLOW}No test cases found for {search_type}: {c.BOLD}{query!r}{c.RESET}",
+                file=sys.stderr,
+            )
         return 0
 
     if args.quiet:
@@ -406,34 +476,50 @@ def _search_command(args) -> int:
             print(c["id"])
         return 0
 
-    c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
-    
+    c = (
+        Colors
+        if (Colors.is_enabled() and not args.no_color)
+        else type(
+            "NoColor",
+            (),
+            {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+        )()
+    )
+
     # Print header with count
     count = len(cases)
     if count == 1:
         print(f"{c.GREEN}Found 1 test case:{c.RESET}\n", file=sys.stderr)
     else:
         print(f"{c.GREEN}Found {count} test cases:{c.RESET}\n", file=sys.stderr)
-    
+
     for i, test_case in enumerate(cases, 1):
         name = test_case.get("name", "")
         full = test_case.get("fullName", "")
         test_id = test_case["id"]
-        
+
         # Main line: ID and name
-        print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{test_id}{c.RESET}\t{c.CYAN}{name}{c.RESET}")
-        
+        print(
+            f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{test_id}{c.RESET}\t{c.CYAN}{name}{c.RESET}"
+        )
+
         # Full name if different
         if full and full != name:
             print(f"   {c.DIM}└─ {full}{c.RESET}")
-    
+
     return 0
 
 
 def _find_orphaned_command(args) -> int:
     """Handle find-orphaned command."""
+    if args.yes and not args.delete:
+        print("Error: --yes only makes sense together with --delete", file=sys.stderr)
+        return 2
     if not args.url:
-        print("Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required", file=sys.stderr)
+        print(
+            "Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required",
+            file=sys.stderr,
+        )
         return 2
     if not args.token:
         print("Error: --token or ALLURE_TOKEN required", file=sys.stderr)
@@ -441,11 +527,11 @@ def _find_orphaned_command(args) -> int:
     if args.project is None:
         print("Error: --project or ALLURE_PROJECT_ID required", file=sys.stderr)
         return 2
-    
+
     # Determine which filters to apply based on explicit flags
     days = args.days
     similarity = args.similarity
-    
+
     # If neither flag is set, use both defaults
     if days is None and similarity is None:
         days = 30
@@ -457,20 +543,20 @@ def _find_orphaned_command(args) -> int:
     elif days is None and similarity is not None:
         days = 0  # No days filtering
     # Both flags set explicitly - use both
-    
+
     # Build search message
     filters = []
     if days > 0:
         filters.append(f"inactive for {days}+ days")
     if similarity > 0:
         filters.append(f"similarity >= {similarity}")
-    
+
     if filters:
         filter_text = ", ".join(filters)
         print(f"Searching for orphaned tests ({filter_text})...", file=sys.stderr)
     else:
         print("Searching for orphaned tests...", file=sys.stderr)
-    
+
     try:
         orphaned = find_orphaned_tests(
             args.url,
@@ -483,119 +569,264 @@ def _find_orphaned_command(args) -> int:
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
-    
+
     if not orphaned:
         if not args.quiet:
-            c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
+            c = (
+                Colors
+                if (Colors.is_enabled() and not args.no_color)
+                else type(
+                    "NoColor",
+                    (),
+                    {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+                )()
+            )
             print(f"{c.GREEN}✓ No orphaned tests found.{c.RESET}", file=sys.stderr)
         return 0
-    
+
     if args.quiet:
         for item in orphaned:
             print(item["old_test"]["id"])
         return 0
-    
-    c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
-    
-    label = "inactive" if not any(item["similar_tests"] for item in orphaned) else "potentially orphaned"
-    print(f"\n{c.BOLD}{c.YELLOW}Found {len(orphaned)} {label} test(s):{c.RESET}\n", file=sys.stderr)
-    
+
+    c = (
+        Colors
+        if (Colors.is_enabled() and not args.no_color)
+        else type(
+            "NoColor",
+            (),
+            {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+        )()
+    )
+
+    label = (
+        "inactive"
+        if not any(item["similar_tests"] for item in orphaned)
+        else "potentially orphaned"
+    )
+    print(
+        f"\n{c.BOLD}{c.YELLOW}Found {len(orphaned)} {label} test(s):{c.RESET}\n",
+        file=sys.stderr,
+    )
+
     for i, item in enumerate(orphaned, 1):
         old = item["old_test"]
         days = item["days_inactive"]
-        
-        print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{old['id']}{c.RESET}"
-              f"\t{c.CYAN}{old.get('name', 'N/A')}{c.RESET}"
-              f" {c.DIM}({c.YELLOW}{days}{c.RESET}{c.DIM} days){c.RESET}")
+
+        print(
+            f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{old['id']}{c.RESET}"
+            f"\t{c.CYAN}{old.get('name', 'N/A')}{c.RESET}"
+            f" {c.DIM}({c.YELLOW}{days}{c.RESET}{c.DIM} days){c.RESET}"
+        )
         if old.get("fullName") and old["fullName"] != old.get("name"):
             print(f"   {c.DIM}└─ {old['fullName']}{c.RESET}")
-        
+
         if item["similar_tests"]:
             print(f"   {c.MAGENTA}Similar tests:{c.RESET}")
             for sim_item in item["similar_tests"][:3]:
                 sim_test = sim_item["test"]
                 sim_score = sim_item["similarity"]
                 sim_days = sim_test.get("_days_inactive", 0)
-                
+
                 if sim_score >= 0.9:
                     sim_color = c.GREEN
                 elif sim_score >= 0.75:
                     sim_color = c.YELLOW
                 else:
                     sim_color = c.RED
-                
+
                 if sim_days < 7:
                     days_color = c.GREEN
                 elif sim_days < 30:
                     days_color = c.YELLOW
                 else:
                     days_color = c.RED
-                
-                print(f"      {c.DIM}•{c.RESET} ID {c.BLUE}{sim_test['id']}{c.RESET} "
-                      f"{c.DIM}({sim_color}{sim_score:.2f}{c.RESET}{c.DIM}, "
-                      f"{days_color}{sim_days}{c.RESET}{c.DIM}d){c.RESET} "
-                      f"{c.DIM}{sim_test.get('name', 'N/A')}{c.RESET}")
-            
+
+                print(
+                    f"      {c.DIM}•{c.RESET} ID {c.BLUE}{sim_test['id']}{c.RESET} "
+                    f"{c.DIM}({sim_color}{sim_score:.2f}{c.RESET}{c.DIM}, "
+                    f"{days_color}{sim_days}{c.RESET}{c.DIM}d){c.RESET} "
+                    f"{c.DIM}{sim_test.get('name', 'N/A')}{c.RESET}"
+                )
+
             if len(item["similar_tests"]) > 3:
                 extra = len(item["similar_tests"]) - 3
                 print(f"      {c.DIM}... and {extra} more{c.RESET}")
         print()
-    
+
     # Interactive deletion
     if args.delete:
-        return _interactive_delete(args.url, args.token, orphaned, no_color=args.no_color)
-    
+        return _interactive_delete(
+            args.url,
+            args.token,
+            orphaned,
+            no_color=args.no_color,
+            assume_yes=args.yes,
+            project_id=args.project,
+        )
+
     return 0
 
 
-def _interactive_delete(base_url: str, api_token: str, orphaned: list, no_color: bool = False) -> int:
-    """Interactively delete orphaned tests."""
-    c = Colors if (Colors.is_enabled() and not no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
-    
-    print(f"\n{c.BOLD}{c.CYAN}--- Interactive Deletion ---{c.RESET}", file=sys.stderr)
-    print(f"For each test, choose: {c.GREEN}[y]{c.RESET}es to delete, {c.YELLOW}[n]{c.RESET}o to skip, {c.RED}[q]{c.RESET}uit\n", file=sys.stderr)
-    
+def _delete_ids(
+    base_url: str, api_token: str, ids: list, c, project_id: int | None = None
+) -> dict:
+    """
+    Delete test cases and report what happened.
+
+    With a known project the whole batch goes out as one bulk request; otherwise
+    (and if bulk fails) the ids are deleted one by one, which also tells us which
+    of them were missing.
+
+    The returned "mode" says which path ran: the bulk API confirms the batch as a
+    whole (204) and not each id, so its counts are "submitted", not "verified".
+    """
+    if project_id is not None and len(ids) > 1:
+        try:
+            count = bulk_remove_test_cases(base_url, api_token, project_id, ids)
+            print(
+                f"  {c.GREEN}✓ Submitted {count} test case(s) in one request{c.RESET}",
+                file=sys.stderr,
+            )
+            return {"deleted": count, "not_found": 0, "failed": 0, "mode": "bulk"}
+        except RuntimeError as e:
+            print(
+                f"  {c.YELLOW}Bulk delete failed ({e}); deleting one by one{c.RESET}",
+                file=sys.stderr,
+            )
+
+    def on_progress(test_id: int, status: str) -> None:
+        if status == "deleted":
+            print(f"  {c.GREEN}✓ {test_id} deleted{c.RESET}", file=sys.stderr)
+        elif status == "not_found":
+            print(f"  {c.YELLOW}– {test_id} not found{c.RESET}", file=sys.stderr)
+        else:
+            print(f"  {c.RED}✗ {test_id} failed{c.RESET}", file=sys.stderr)
+
+    result = bulk_delete_test_cases(base_url, api_token, ids, on_progress=on_progress)
+    return {**result, "mode": "single"}
+
+
+def _interactive_delete(
+    base_url: str,
+    api_token: str,
+    orphaned: list,
+    no_color: bool = False,
+    assume_yes: bool = False,
+    project_id: int | None = None,
+) -> int:
+    """
+    Delete orphaned tests: one by one with a prompt, or all at once when
+    assume_yes is set (--yes) or the user answers 'a' to a prompt.
+    """
+    c = (
+        Colors
+        if (Colors.is_enabled() and not no_color)
+        else type(
+            "NoColor",
+            (),
+            {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+        )()
+    )
+
+    ids = [item["old_test"]["id"] for item in orphaned]
     deleted_count = 0
     skipped_count = 0
-    
-    jwt = get_jwt(base_url, api_token)
-    
+    not_found_count = 0
+    failed_count = 0
+
+    used_bulk = False
+
+    def delete_batch(batch: list) -> None:
+        nonlocal deleted_count, not_found_count, failed_count, used_bulk
+        result = _delete_ids(base_url, api_token, batch, c, project_id=project_id)
+        deleted_count += result["deleted"]
+        not_found_count += result["not_found"]
+        failed_count += result["failed"]
+        used_bulk = used_bulk or result.get("mode") == "bulk"
+
+    def print_summary(prefix: str) -> None:
+        # A bulk request is confirmed as a whole, so we can only claim submission.
+        verb = "Submitted" if used_bulk else "Deleted"
+        tail = ""
+        if not_found_count:
+            tail += f", {c.YELLOW}Not found: {not_found_count}{c.RESET}"
+        if failed_count:
+            tail += f", {c.RED}Failed: {failed_count}{c.RESET}"
+        print(
+            f"\n{c.BOLD}{c.CYAN}{prefix}{c.RESET} "
+            f"{c.GREEN}{verb}: {deleted_count}{c.RESET}, "
+            f"{c.YELLOW}Skipped: {skipped_count}{c.RESET}{tail}",
+            file=sys.stderr,
+        )
+
+    # --yes: no prompting at all, the list above is the only confirmation
+    if assume_yes:
+        print(
+            f"\n{c.BOLD}{c.CYAN}Deleting all {len(ids)} test(s) without confirmation...{c.RESET}",
+            file=sys.stderr,
+        )
+        delete_batch(ids)
+        print_summary("Done.")
+        return 0
+
+    print(f"\n{c.BOLD}{c.CYAN}--- Interactive Deletion ---{c.RESET}", file=sys.stderr)
+    print(
+        f"For each test, choose: {c.GREEN}[y]{c.RESET}es to delete, {c.YELLOW}[n]{c.RESET}o to skip, "
+        f"{c.MAGENTA}[a]{c.RESET}ll remaining, {c.RED}[q]{c.RESET}uit\n",
+        file=sys.stderr,
+    )
+
     for i, item in enumerate(orphaned, 1):
         old = item["old_test"]
         test_id = old["id"]
-        
-        print(f"\n{c.BOLD}[{i}/{len(orphaned)}]{c.RESET} Test ID {c.RED}{c.BOLD}{test_id}{c.RESET}: {old.get('name', 'N/A')}", file=sys.stderr)
-        print(f"{c.DIM}Inactive for {item['days_inactive']} days{c.RESET}", file=sys.stderr)
-        
+
+        print(
+            f"\n{c.BOLD}[{i}/{len(orphaned)}]{c.RESET} Test ID {c.RED}{c.BOLD}{test_id}{c.RESET}: {old.get('name', 'N/A')}",
+            file=sys.stderr,
+        )
+        print(
+            f"{c.DIM}Inactive for {item['days_inactive']} days{c.RESET}",
+            file=sys.stderr,
+        )
+
         while True:
             try:
-                choice = input(f"Delete this test? {c.GREEN}[y]{c.RESET}/{c.YELLOW}[n]{c.RESET}/{c.RED}[q]{c.RESET}: ").strip().lower()
+                choice = (
+                    input(
+                        f"Delete this test? {c.GREEN}[y]{c.RESET}/{c.YELLOW}[n]{c.RESET}/"
+                        f"{c.MAGENTA}[a]{c.RESET}/{c.RED}[q]{c.RESET}: "
+                    )
+                    .strip()
+                    .lower()
+                )
             except (EOFError, KeyboardInterrupt):
                 print(f"\n{c.YELLOW}Aborted.{c.RESET}", file=sys.stderr)
                 return 0
-            
+
             if choice == "q":
-                print(f"\n{c.CYAN}Stopped.{c.RESET} {c.GREEN}Deleted: {deleted_count}{c.RESET}, {c.YELLOW}Skipped: {skipped_count}{c.RESET}", file=sys.stderr)
+                print_summary("Stopped.")
                 return 0
             elif choice == "y":
-                try:
-                    success = delete_test_case(base_url, jwt, test_id)
-                    if success:
-                        print(f"{c.GREEN}✓ Deleted test {test_id}{c.RESET}", file=sys.stderr)
-                        deleted_count += 1
-                    else:
-                        print(f"{c.RED}✗ Failed to delete test {test_id}{c.RESET}", file=sys.stderr)
-                except Exception as e:
-                    print(f"{c.RED}✗ Error deleting test {test_id}: {e}{c.RESET}", file=sys.stderr)
+                delete_batch([test_id])
                 break
+            elif choice == "a":
+                remaining = ids[i - 1:]
+                print(
+                    f"{c.DIM}Deleting the remaining {len(remaining)} test(s)...{c.RESET}",
+                    file=sys.stderr,
+                )
+                delete_batch(remaining)
+                print_summary("Done.")
+                return 0
             elif choice == "n":
                 print(f"{c.DIM}Skipped test {test_id}{c.RESET}", file=sys.stderr)
                 skipped_count += 1
                 break
             else:
-                print(f"{c.RED}Invalid choice. Use y/n/q{c.RESET}", file=sys.stderr)
-    
-    print(f"\n{c.BOLD}{c.CYAN}Done.{c.RESET} {c.GREEN}Deleted: {deleted_count}{c.RESET}, {c.YELLOW}Skipped: {skipped_count}{c.RESET}", file=sys.stderr)
+                print(f"{c.RED}Invalid choice. Use y/n/a/q{c.RESET}", file=sys.stderr)
+
+    print_summary("Done.")
     return 0
 
 
@@ -604,13 +835,24 @@ def _delete_command(args) -> int:
     import csv
 
     if not args.url:
-        print("Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required", file=sys.stderr)
+        print(
+            "Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required",
+            file=sys.stderr,
+        )
         return 2
     if not args.token:
         print("Error: --token or ALLURE_TOKEN required", file=sys.stderr)
         return 2
 
-    c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
+    c = (
+        Colors
+        if (Colors.is_enabled() and not args.no_color)
+        else type(
+            "NoColor",
+            (),
+            {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+        )()
+    )
 
     # Collect IDs from positional args
     all_ids: list[int] = list(args.ids or [])
@@ -624,7 +866,7 @@ def _delete_command(args) -> int:
                     # Detect delimiter by reading first line
                     first_line = fh.readline()
                     fh.seek(0)
-                    delimiter = ';' if ';' in first_line else ','
+                    delimiter = ";" if ";" in first_line else ","
                     reader = csv.DictReader(fh, delimiter=delimiter)
                     for row in reader:
                         raw = row.get("allure_id", "").strip()
@@ -648,23 +890,27 @@ def _delete_command(args) -> int:
             unique_ids.append(tid)
 
     if not unique_ids:
-        print("Error: no test case IDs provided (use positional args and/or --file)", file=sys.stderr)
+        print(
+            "Error: no test case IDs provided (use positional args and/or --file)",
+            file=sys.stderr,
+        )
         return 2
 
     # Summary
-    print(f"{c.BOLD}About to delete {len(unique_ids)} test case(s):{c.RESET}\n", file=sys.stderr)
+    print(
+        f"{c.BOLD}About to delete {len(unique_ids)} test case(s):{c.RESET}\n",
+        file=sys.stderr,
+    )
 
     # Fetch test case details (unless --no-fetch)
     fetched: list[dict | None] = []
     if not args.no_fetch:
-        try:
-            jwt = get_jwt(args.url, args.token)
-        except Exception as e:
-            print(f"Error getting JWT: {e}", file=sys.stderr)
-            return 1
         for tid in unique_ids:
             try:
-                tc = get_test_case_by_id(args.url, jwt, tid)
+                tc = get_test_case_by_id(args.url, args.token, tid)
+            except AuthError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
             except Exception:
                 tc = None
             fetched.append(tc)
@@ -690,39 +936,37 @@ def _delete_command(args) -> int:
             print(f"{c.YELLOW}Aborted.{c.RESET}", file=sys.stderr)
             return 0
 
-    # Progress callback
-    def _on_progress(test_id: int, status: str) -> None:
-        if status == "deleted":
-            print(f"  {c.GREEN}✓ {test_id} deleted{c.RESET}", file=sys.stderr)
-        elif status == "not_found":
-            print(f"  {c.YELLOW}– {test_id} not found{c.RESET}", file=sys.stderr)
-        else:
-            print(f"  {c.RED}✗ {test_id} failed{c.RESET}", file=sys.stderr)
-
     # Execute
     try:
-        result = bulk_delete_test_cases(
-            args.url,
-            args.token,
-            unique_ids,
-            on_progress=_on_progress,
+        result = _delete_ids(
+            args.url, args.token, unique_ids, c, project_id=args.project
         )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    # Final summary
-    print(
-        f"\n{c.BOLD}Done.{c.RESET} "
-        f"{c.GREEN}Deleted: {result['deleted']}{c.RESET}, "
-        f"{c.YELLOW}Not found: {result['not_found']}{c.RESET}, "
-        f"{c.RED}Failed: {result['failed']}{c.RESET}",
-        file=sys.stderr,
-    )
+    # Final summary. The bulk API confirms the batch, not each id, so it can only
+    # report what was submitted.
+    if result.get("mode") == "bulk":
+        print(
+            f"\n{c.BOLD}Done.{c.RESET} "
+            f"{c.GREEN}Submitted: {result['deleted']}{c.RESET}",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            f"\n{c.BOLD}Done.{c.RESET} "
+            f"{c.GREEN}Deleted: {result['deleted']}{c.RESET}, "
+            f"{c.YELLOW}Not found: {result['not_found']}{c.RESET}, "
+            f"{c.RED}Failed: {result['failed']}{c.RESET}",
+            file=sys.stderr,
+        )
     return 0
 
 
-def _print_delete_list(c, unique_ids: list[int], fetched: list, no_fetch: bool, verbose: bool) -> None:
+def _print_delete_list(
+    c, unique_ids: list[int], fetched: list, no_fetch: bool, verbose: bool
+) -> None:
     """Print the list of test cases about to be deleted."""
     total = len(unique_ids)
     show_head = 20
@@ -736,20 +980,32 @@ def _print_delete_list(c, unique_ids: list[int], fetched: list, no_fetch: bool, 
         if truncate and show_head < idx < total - show_tail:
             if idx == show_head:
                 skipped = total - show_head - show_tail
-                print(f"\n   {c.DIM}... and {skipped} more ...{c.RESET}\n", file=sys.stderr)
+                print(
+                    f"\n   {c.DIM}... and {skipped} more ...{c.RESET}\n",
+                    file=sys.stderr,
+                )
             continue
 
         if no_fetch:
             # --no-fetch mode: just show IDs
-            print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}", file=sys.stderr)
+            print(
+                f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}",
+                file=sys.stderr,
+            )
         elif tc is None:
             # Fetched but not found
-            print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}    {c.YELLOW}(not found){c.RESET}", file=sys.stderr)
+            print(
+                f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}    {c.YELLOW}(not found){c.RESET}",
+                file=sys.stderr,
+            )
         else:
             # Full details
             name = tc.get("name", "")
             full = tc.get("fullName", "")
-            print(f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}\t{c.CYAN}{name}{c.RESET}", file=sys.stderr)
+            print(
+                f"{c.DIM}{i}.{c.RESET} ID {c.BLUE}{c.BOLD}{tid}{c.RESET}\t{c.CYAN}{name}{c.RESET}",
+                file=sys.stderr,
+            )
             if full and full != name:
                 print(f"   {c.DIM}└─ {full}{c.RESET}", file=sys.stderr)
 
@@ -817,7 +1073,10 @@ def _parse_create_file(file_path: str) -> list[dict]:
 def _create_command(args) -> int:
     """Handle create command."""
     if not args.url:
-        print("Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required", file=sys.stderr)
+        print(
+            "Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required",
+            file=sys.stderr,
+        )
         return 2
     if not args.token:
         print("Error: --token or ALLURE_TOKEN required", file=sys.stderr)
@@ -826,7 +1085,15 @@ def _create_command(args) -> int:
         print("Error: --project or ALLURE_PROJECT_ID required", file=sys.stderr)
         return 2
 
-    c = Colors if (Colors.is_enabled() and not args.no_color) else type('NoColor', (), {attr: '' for attr in dir(Colors) if not attr.startswith('_')})()
+    c = (
+        Colors
+        if (Colors.is_enabled() and not args.no_color)
+        else type(
+            "NoColor",
+            (),
+            {attr: "" for attr in dir(Colors) if not attr.startswith("_")},
+        )()
+    )
 
     has_name = args.name is not None
     has_file = args.file is not None
@@ -835,7 +1102,10 @@ def _create_command(args) -> int:
         print("Error: provide either a name or --file, not both", file=sys.stderr)
         return 2
     if not has_name and not has_file:
-        print("Error: provide a test case name or --file for bulk creation", file=sys.stderr)
+        print(
+            "Error: provide a test case name or --file for bulk creation",
+            file=sys.stderr,
+        )
         return 2
 
     # --- Single creation ---
@@ -844,7 +1114,9 @@ def _create_command(args) -> int:
         print(f"{c.BOLD}Creating test case:{c.RESET}", file=sys.stderr)
         print(f"  {c.CYAN}Name:{c.RESET} {args.name}", file=sys.stderr)
         if args.description:
-            print(f"  {c.CYAN}Description:{c.RESET} {args.description}", file=sys.stderr)
+            print(
+                f"  {c.CYAN}Description:{c.RESET} {args.description}", file=sys.stderr
+            )
         if args.full_name:
             print(f"  {c.CYAN}Full name:{c.RESET} {args.full_name}", file=sys.stderr)
         if tags:
@@ -855,10 +1127,9 @@ def _create_command(args) -> int:
             return 0
 
         try:
-            jwt = get_jwt(args.url, args.token)
             result = create_test_case(
                 args.url,
-                jwt,
+                args.token,
                 args.project,
                 args.name,
                 description=args.description,
@@ -874,7 +1145,10 @@ def _create_command(args) -> int:
             tc_name = result.get("name", "")
             tc_full = result.get("fullName", "")
             print(f"\n{c.GREEN}✓ Created test case:{c.RESET}", file=sys.stderr)
-            print(f"  ID {c.BLUE}{c.BOLD}{tc_id}{c.RESET}\t{c.CYAN}{tc_name}{c.RESET}", file=sys.stderr)
+            print(
+                f"  ID {c.BLUE}{c.BOLD}{tc_id}{c.RESET}\t{c.CYAN}{tc_name}{c.RESET}",
+                file=sys.stderr,
+            )
             if tc_full and tc_full != tc_name:
                 print(f"  {c.DIM}└─ {tc_full}{c.RESET}", file=sys.stderr)
             # Print ID to stdout for piping
@@ -896,7 +1170,10 @@ def _create_command(args) -> int:
         print("Error: no valid test cases found in file", file=sys.stderr)
         return 2
 
-    print(f"{c.BOLD}About to create {len(test_cases)} test case(s):{c.RESET}\n", file=sys.stderr)
+    print(
+        f"{c.BOLD}About to create {len(test_cases)} test case(s):{c.RESET}\n",
+        file=sys.stderr,
+    )
 
     for i, tc in enumerate(test_cases, 1):
         print(f"{c.DIM}{i}.{c.RESET} {c.CYAN}{tc['name']}{c.RESET}", file=sys.stderr)

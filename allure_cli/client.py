@@ -140,6 +140,7 @@ def request(
     params: dict[str, Any] | None = None,
     body: dict[str, Any] | None = None,
     context: str = "",
+    raw: bool = False,
 ) -> tuple[int, Any]:
     """
     The single entry point for every authenticated API call.
@@ -150,7 +151,8 @@ def request(
     or pass a JWT — new endpoints get token refresh for free by going through
     this function.
 
-    Returns (status_code, parsed_json_or_None).
+    Returns (status_code, parsed_json_or_None), or (status_code, bytes) when
+    raw=True — for binary payloads such as attachment content.
     Raises AuthError if auth cannot be recovered, ApiError for other HTTP errors.
     """
     url = f"{base_url.rstrip('/')}{path}"
@@ -162,15 +164,18 @@ def request(
     def send(jwt: str) -> tuple[int, Any]:
         headers = {
             "Authorization": f"Bearer {jwt}",
-            "Accept": "application/json",
+            "Accept": "*/*" if raw else "application/json",
         }
         if payload is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(url, data=payload, method=method, headers=headers)
         try:
             with urllib.request.urlopen(req) as resp:
-                raw = resp.read().decode()
-                return resp.status, (json.loads(raw) if raw else None)
+                content = resp.read()
+                if raw:
+                    return resp.status, content
+                text = content.decode()
+                return resp.status, (json.loads(text) if text else None)
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise AuthError(
@@ -740,3 +745,223 @@ def bulk_create_test_cases(
             on_progress(tc_name, status, result)
 
     return {"created": created, "failed": failed}
+
+
+# --- Launches and test results ------------------------------------------------
+
+#: Test result statuses that mean "something is wrong" (broken = error outside asserts).
+FAILURE_STATUSES = ("failed", "broken")
+
+
+def _aql_string(value: str) -> str:
+    """Quote a value for AQL, escaping backslashes and double quotes."""
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _collect_pages(
+    base_url: str,
+    api_token: str,
+    path: str,
+    params: dict[str, Any],
+    *,
+    page_size: int,
+    context: str,
+) -> list[dict[str, Any]]:
+    """Walk a paginated endpoint and return every item of 'content'."""
+    items: list[dict[str, Any]] = []
+    page = 0
+    while True:
+        _, data = request(
+            base_url,
+            api_token,
+            "GET",
+            path,
+            params={**params, "page": page, "size": page_size},
+            context=context,
+        )
+        data = data or {}
+        items.extend(data.get("content") or [])
+        if page >= (data.get("totalPages") or 1) - 1:
+            return items
+        page += 1
+
+
+def find_launches_by_name(
+    base_url: str,
+    api_token: str,
+    project_id: int,
+    name_query: str,
+    *,
+    size: int = 10,
+) -> list[dict[str, Any]]:
+    """Launches whose name contains name_query, newest first."""
+    _, data = request(
+        base_url,
+        api_token,
+        "GET",
+        "/api/launch/__search",
+        params={
+            "projectId": project_id,
+            "rql": f"name ~= {_aql_string(name_query)}",
+            "sort": "createdDate,DESC",
+            "page": 0,
+            "size": size,
+        },
+        context="while searching launches",
+    )
+    return (data or {}).get("content") or []
+
+
+def get_recent_launches(
+    base_url: str,
+    api_token: str,
+    project_id: int,
+    *,
+    size: int = 10,
+) -> list[dict[str, Any]]:
+    """The project's most recent launches, newest first."""
+    _, data = request(
+        base_url,
+        api_token,
+        "GET",
+        "/api/launch",
+        params={
+            "projectId": project_id,
+            "sort": "createdDate,DESC",
+            "page": 0,
+            "size": size,
+        },
+        context="while listing launches",
+    )
+    return (data or {}).get("content") or []
+
+
+def get_launch(
+    base_url: str,
+    api_token: str,
+    launch_id: int,
+) -> dict[str, Any] | None:
+    """
+    Launch by ID, or None if there is no such launch.
+
+    Allure answers 403 (not 404) for a launch id that does not exist, so both
+    codes mean "not found" here.
+    """
+    try:
+        _, data = request(
+            base_url,
+            api_token,
+            "GET",
+            f"/api/launch/{launch_id}",
+            context="while fetching the launch",
+        )
+    except ApiError as e:
+        if e.code in (403, 404):
+            return None
+        raise
+    return data
+
+
+def get_launch_statistic(
+    base_url: str,
+    api_token: str,
+    launch_id: int,
+) -> dict[str, int]:
+    """Result counts by status, e.g. {"passed": 344, "failed": 2}."""
+    _, data = request(
+        base_url,
+        api_token,
+        "GET",
+        f"/api/launch/{launch_id}/statistic",
+        context="while fetching launch statistics",
+    )
+    if not isinstance(data, list):
+        return {}
+    return {item["status"]: item["count"] for item in data if "status" in item}
+
+
+def get_launch_results(
+    base_url: str,
+    api_token: str,
+    project_id: int,
+    launch_id: int,
+    *,
+    statuses: tuple[str, ...] = FAILURE_STATUSES,
+    page_size: int = 100,
+) -> list[dict[str, Any]]:
+    """
+    Test results of a launch with the given statuses (all results if empty).
+
+    The search returns short items (id, name, status, testCaseId); use
+    get_test_result() for the message and the trace.
+    """
+    rql = f"launch = {int(launch_id)}"
+    if statuses:
+        rql += (
+            " and (" + " or ".join(f"status = {_aql_string(s)}" for s in statuses) + ")"
+        )
+    return _collect_pages(
+        base_url,
+        api_token,
+        "/api/testresult/__search",
+        {"projectId": project_id, "rql": rql},
+        page_size=page_size,
+        context="while searching test results",
+    )
+
+
+def get_test_result(
+    base_url: str,
+    api_token: str,
+    test_result_id: int,
+) -> dict[str, Any] | None:
+    """Full test result (message, trace, fullName, duration...), or None."""
+    try:
+        _, data = request(
+            base_url,
+            api_token,
+            "GET",
+            f"/api/testresult/{test_result_id}",
+            context="while fetching the test result",
+        )
+    except ApiError as e:
+        if e.code in (403, 404):
+            return None
+        raise
+    return data
+
+
+def get_test_result_attachments(
+    base_url: str,
+    api_token: str,
+    test_result_id: int,
+    *,
+    page_size: int = 100,
+) -> list[dict[str, Any]]:
+    """Attachments of a test result: id, name, contentType, contentLength."""
+    return _collect_pages(
+        base_url,
+        api_token,
+        "/api/testresult/attachment",
+        {"testResultId": test_result_id},
+        page_size=page_size,
+        context="while listing attachments",
+    )
+
+
+def download_attachment(
+    base_url: str,
+    api_token: str,
+    attachment_id: int,
+) -> bytes:
+    """Raw content of a test result attachment (screenshot, log, ...)."""
+    _, content = request(
+        base_url,
+        api_token,
+        "GET",
+        f"/api/testresult/attachment/{attachment_id}/content",
+        context="while downloading the attachment",
+        raw=True,
+    )
+    return content or b""

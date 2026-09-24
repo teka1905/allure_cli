@@ -1,6 +1,6 @@
 # Allure CLI
 
-A CLI for Allure TestOps. Its main job is looking up a test case's Allure ID by name; it can also create, delete and audit test cases.
+A CLI for Allure TestOps. Its main job is looking up a test case's Allure ID by name; it can also create, delete and audit test cases, and show why a launch failed — messages, traces and attachments.
 
 [![PyPI version](https://badge.fury.io/py/allure-cli.svg)](https://pypi.org/project/allure-cli/)
 [![Python](https://img.shields.io/pypi/pyversions/allure-cli.svg)](https://pypi.org/project/allure-cli/)
@@ -40,12 +40,15 @@ export ALLURE_TOKEN="<YOUR_TOKEN>"
 
 ## Usage
 
-The CLI has four commands:
+The CLI has seven commands:
 
 1. **`search`** (the default) — find test cases by ID or name
 2. **`find-orphaned`** — find orphaned (stale) tests
 3. **`delete`** — delete test cases by ID
 4. **`create`** — create test cases, one by one or in bulk from a file
+5. **`launches`** — list launches, optionally filtered by name
+6. **`failures`** — failed and broken tests of a launch: message, trace, attachments
+7. **`attachments`** — list or download the attachments of a test result
 
 **Help:**
 
@@ -59,6 +62,7 @@ allure-cli search --help
 allure-cli find-orphaned --help
 allure-cli delete --help
 allure-cli create --help
+allure-cli failures --help
 ```
 
 ### `search` — find tests
@@ -418,6 +422,92 @@ About to create 1 test case(s):
 
 Done. Created: 1, Failed: 0
 ```
+
+### `launches` — list launches
+
+```bash
+# The 10 most recent launches of the project
+allure-cli launches
+
+# Launches whose name contains a substring (newest first)
+allure-cli launches "pr_15967418"
+
+# IDs only / JSON for scripts
+allure-cli launches "nightly" -q
+allure-cli launches "nightly" --json
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--size` | Maximum number of launches | 10 |
+| `-q, --quiet` | Print IDs only, one per line | false |
+| `--json` | Print launches as JSON | false |
+| `--no-color` | Disable colored output | false |
+
+**Example output:**
+
+```
+ID 748636	2026-09-23 18:11	open	user-pr_15967418-37790018 --seed d8002021
+```
+
+### `failures` — why a launch is red
+
+Shows every `failed` and `broken` test result of a launch with its error message.
+The launch is given by ID or by a substring of its name; the newest matching launch is used.
+A number is tried as a launch ID first and then as a name, so a PR or build number found
+in launch names works as is.
+
+```bash
+# By launch ID
+allure-cli failures 748636
+
+# By a part of the launch name (e.g. a PR number)
+allure-cli failures 15967418
+
+# Full traces instead of messages
+allure-cli failures 748636 --trace
+
+# Also save the attachments (screenshots, logs) to ./allure/<test result id>/
+allure-cli failures 748636 --download ./allure
+
+# Everything, traces included, as JSON — handy for scripts and AI agents
+allure-cli failures 748636 --json
+```
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--trace` | Print the full trace of every failure | false |
+| `--download DIR` | Save attachments of every failure to `DIR/<test result id>/` | — |
+| `--json` | Print launch, status counts and failures (with traces) as JSON | false |
+| `--no-color` | Disable colored output | false |
+
+**Example output:**
+
+```
+Launch 748636 · 2026-09-23 18:11 · open
+user-pr_15967418-37790018 --seed d8002021
+failed 2 · passed 344
+
+1. [failed] Link a knowledge article to a ticket
+   └─ scenarios/admin/ticket_page/link_knowledge.py::Scenario
+   result 1399454750 · 40.7s
+   AssertionError: the knowledge base widget did not show the service
+   attachments: 12 → allure/1399454750
+```
+
+### `attachments` — files of a test result
+
+```bash
+# List the attachments of a test result (the ID comes from `failures`)
+allure-cli attachments 1399454750
+
+# Download them
+allure-cli attachments 1399454750 --download ./allure/1399454750
+```
+
+Attachment files keep their names from Allure; when a name repeats within a test result,
+the attachment ID is appended (`shot.png`, `shot_1723967328.png`). Downloading again
+overwrites the same files. `--project` is not needed for this command.
 
 ## Authorization
 

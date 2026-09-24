@@ -1,11 +1,14 @@
 """
-CLI: get Allure TestOps test case ID(s) by name or ID.
+CLI: get Allure TestOps test case ID(s) by name or ID; inspect launch failures.
 Env: ALLURE_ENDPOINT (or ALLURE_TESTOPS_URL), ALLURE_TOKEN, ALLURE_PROJECT_ID.
 """
 
 import argparse
+import json
 import os
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from .client import (
     AuthError,
@@ -13,10 +16,18 @@ from .client import (
     bulk_delete_test_cases,
     bulk_remove_test_cases,
     create_test_case,
+    download_attachment,
     find_by_id,
     find_by_name,
+    find_launches_by_name,
     find_orphaned_tests,
+    get_launch,
+    get_launch_results,
+    get_launch_statistic,
+    get_recent_launches,
     get_test_case_by_id,
+    get_test_result,
+    get_test_result_attachments,
 )
 
 
@@ -47,6 +58,58 @@ def _env(key: str, fallback_key: str | None = None) -> str | None:
         return v
     if fallback_key:
         return os.environ.get(fallback_key)
+    return None
+
+
+def _add_connection_args(
+    parser: argparse.ArgumentParser, *, project: bool = True
+) -> None:
+    """--url, --token, [--project] and --no-color, with the usual env defaults."""
+    parser.add_argument(
+        "--url",
+        default=_env("ALLURE_ENDPOINT") or _env("ALLURE_TESTOPS_URL"),
+        help="Allure TestOps base URL (default: ALLURE_ENDPOINT or ALLURE_TESTOPS_URL)",
+    )
+    parser.add_argument(
+        "--token",
+        default=_env("ALLURE_TOKEN"),
+        help="API token (default: ALLURE_TOKEN)",
+    )
+    if project:
+        parser.add_argument(
+            "--project",
+            type=int,
+            default=(
+                int(os.environ["ALLURE_PROJECT_ID"])
+                if os.environ.get("ALLURE_PROJECT_ID")
+                else None
+            ),
+            help="Project ID (default: ALLURE_PROJECT_ID)",
+        )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output",
+    )
+
+
+def _colors(no_color: bool):
+    """Colors, or a stand-in with every code blanked out."""
+    if Colors.is_enabled() and not no_color:
+        return Colors
+    return type(
+        "NoColor", (), {attr: "" for attr in dir(Colors) if not attr.startswith("_")}
+    )()
+
+
+def _check_connection_args(args, *, project: bool = True) -> str | None:
+    """Error message for a missing --url/--token/--project, or None."""
+    if not args.url:
+        return "Error: --url or ALLURE_ENDPOINT/ALLURE_TESTOPS_URL required"
+    if not args.token:
+        return "Error: --token or ALLURE_TOKEN required"
+    if project and args.project is None:
+        return "Error: --project or ALLURE_PROJECT_ID required"
     return None
 
 
@@ -300,6 +363,86 @@ def main() -> int:
         help="Show all test cases (don't truncate long lists)",
     )
 
+    # Launches command
+    launches_parser = subparsers.add_parser(
+        "launches",
+        help="List launches, newest first (optionally filtered by name)",
+    )
+    launches_parser.add_argument(
+        "query",
+        nargs="?",
+        default=None,
+        help="Substring of the launch name (default: all launches)",
+    )
+    launches_parser.add_argument(
+        "--size",
+        type=int,
+        default=10,
+        help="Max results (default: 10)",
+    )
+    launches_parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Print only IDs, one per line",
+    )
+    launches_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print launches as JSON",
+    )
+    _add_connection_args(launches_parser)
+
+    # Failures command
+    failures_parser = subparsers.add_parser(
+        "failures",
+        help="Show failed and broken tests of a launch: message, trace, attachments",
+    )
+    failures_parser.add_argument(
+        "launch",
+        help="Launch ID, or a substring of the launch name (the newest match is used)",
+    )
+    failures_parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Print the full trace of every failure",
+    )
+    failures_parser.add_argument(
+        "--download",
+        metavar="DIR",
+        default=None,
+        help="Save attachments of every failure to DIR/<test result id>/",
+    )
+    failures_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print failures as JSON",
+    )
+    _add_connection_args(failures_parser)
+
+    # Attachments command
+    attachments_parser = subparsers.add_parser(
+        "attachments",
+        help="List or download attachments of a test result",
+    )
+    attachments_parser.add_argument(
+        "result_id",
+        type=int,
+        help="Test result ID (shown by the failures command)",
+    )
+    attachments_parser.add_argument(
+        "--download",
+        metavar="DIR",
+        default=None,
+        help="Save the attachments to DIR",
+    )
+    attachments_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print attachments as JSON",
+    )
+    _add_connection_args(attachments_parser, project=False)
+
     # Backward compatibility: `allure-cli "query"` means `allure-cli search "query"`.
     # Without this, argparse rejects the query as an unknown command before the
     # old-style fallback below gets a chance to run.
@@ -376,6 +519,12 @@ def main() -> int:
         return _delete_command(args)
     elif args.command == "create":
         return _create_command(args)
+    elif args.command == "launches":
+        return _launches_command(args)
+    elif args.command == "failures":
+        return _failures_command(args)
+    elif args.command == "attachments":
+        return _attachments_command(args)
     else:
         parser.print_help()
         return 2
@@ -1214,6 +1363,283 @@ def _create_command(args) -> int:
         f"{c.RED}Failed: {summary['failed']}{c.RESET}",
         file=sys.stderr,
     )
+    return 0
+
+
+def _format_ts(ms: int | None) -> str:
+    """Allure timestamp (ms since epoch) as local 'YYYY-MM-DD HH:MM'."""
+    if not ms:
+        return "?"
+    return datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d %H:%M")
+
+
+def _launch_summary(launch: dict) -> dict:
+    return {
+        "id": launch.get("id"),
+        "name": launch.get("name"),
+        "createdDate": launch.get("createdDate"),
+        "closed": launch.get("closed"),
+    }
+
+
+def _launches_command(args) -> int:
+    """Handle launches command."""
+    error = _check_connection_args(args)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    try:
+        if args.query:
+            launches = find_launches_by_name(
+                args.url, args.token, args.project, args.query, size=args.size
+            )
+        else:
+            launches = get_recent_launches(
+                args.url, args.token, args.project, size=args.size
+            )
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(
+            json.dumps(
+                [_launch_summary(la) for la in launches], ensure_ascii=False, indent=2
+            )
+        )
+        return 0
+    if args.quiet:
+        for launch in launches:
+            print(launch["id"])
+        return 0
+
+    c = _colors(args.no_color)
+    if not launches:
+        what = f" matching {args.query!r}" if args.query else ""
+        print(f"{c.YELLOW}No launches found{what}{c.RESET}", file=sys.stderr)
+        return 0
+
+    for launch in launches:
+        state = "closed" if launch.get("closed") else "open"
+        print(
+            f"ID {c.BLUE}{c.BOLD}{launch['id']}{c.RESET}\t"
+            f"{c.DIM}{_format_ts(launch.get('createdDate'))}\t{state}{c.RESET}\t"
+            f"{c.CYAN}{launch.get('name', '')}{c.RESET}"
+        )
+    return 0
+
+
+def _resolve_launch(args, c) -> dict | None:
+    """
+    Find the launch the user means: an ID, or else the newest launch whose name
+    contains the argument. A number is tried as an ID first and then as a name —
+    launch names often carry numbers (PR, build) that are not launch IDs.
+    """
+    if args.launch.isdigit():
+        launch = get_launch(args.url, args.token, int(args.launch))
+        if launch:
+            return launch
+    matches = find_launches_by_name(
+        args.url, args.token, args.project, args.launch, size=2
+    )
+    if not matches:
+        return None
+    if len(matches) > 1:
+        print(
+            f"{c.DIM}Several launches match {args.launch!r}, using the newest one{c.RESET}",
+            file=sys.stderr,
+        )
+    return matches[0]
+
+
+def _safe_filename(name: str) -> str:
+    """Attachment name as a file name: no path separators or control characters."""
+    cleaned = "".join("_" if ch in '/\\:*?"<>|' or ord(ch) < 32 else ch for ch in name)
+    cleaned = cleaned.strip(" .")
+    return cleaned or "attachment"
+
+
+def _save_attachments(
+    base_url: str, api_token: str, attachments: list[dict], target: Path
+) -> list[str]:
+    """
+    Download attachments into target, one file per attachment, and return the paths.
+
+    Names repeat within a result (the same log attached twice), so a repeated name
+    gets the attachment id appended. A second run writes the same paths again.
+    """
+    target.mkdir(parents=True, exist_ok=True)
+    used: set[str] = set()
+    paths = []
+    for attachment in attachments:
+        filename = _safe_filename(attachment.get("name") or str(attachment["id"]))
+        if filename in used:
+            stem, dot, ext = filename.rpartition(".")
+            filename = (
+                f"{stem}_{attachment['id']}.{ext}"
+                if dot
+                else f"{filename}_{attachment['id']}"
+            )
+        used.add(filename)
+        path = target / filename
+        path.write_bytes(download_attachment(base_url, api_token, attachment["id"]))
+        paths.append(str(path))
+    return paths
+
+
+def _failures_command(args) -> int:
+    """Handle failures command."""
+    error = _check_connection_args(args)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    c = _colors(args.no_color)
+    try:
+        launch = _resolve_launch(args, c)
+        if launch is None:
+            print(
+                f"{c.YELLOW}No launch found for {args.launch!r}{c.RESET}",
+                file=sys.stderr,
+            )
+            return 1
+        statistic = get_launch_statistic(args.url, args.token, launch["id"])
+        short_results = get_launch_results(
+            args.url, args.token, args.project, launch["id"]
+        )
+        failures = []
+        for short in short_results:
+            result = get_test_result(args.url, args.token, short["id"]) or short
+            if args.download:
+                attachments = get_test_result_attachments(
+                    args.url, args.token, short["id"]
+                )
+                result["_attachments"] = _save_attachments(
+                    args.url,
+                    args.token,
+                    attachments,
+                    Path(args.download) / str(short["id"]),
+                )
+            failures.append(result)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        payload = {
+            "launch": _launch_summary(launch),
+            "statistic": statistic,
+            "failures": [
+                {
+                    "id": r.get("id"),
+                    "status": r.get("status"),
+                    "name": r.get("name"),
+                    "fullName": r.get("fullName"),
+                    "testCaseId": r.get("testCaseId"),
+                    "duration": r.get("duration"),
+                    "message": r.get("message"),
+                    "trace": r.get("trace"),
+                    **(
+                        {"attachments": r["_attachments"]}
+                        if "_attachments" in r
+                        else {}
+                    ),
+                }
+                for r in failures
+            ],
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    state = "closed" if launch.get("closed") else "open"
+    created = _format_ts(launch.get("createdDate"))
+    print(
+        f"{c.BOLD}Launch {launch['id']}{c.RESET} {c.DIM}· {created} · {state}{c.RESET}\n"
+        f"{c.CYAN}{launch.get('name', '')}{c.RESET}",
+        file=sys.stderr,
+    )
+    if statistic:
+        counts = " · ".join(
+            f"{status} {count}" for status, count in sorted(statistic.items())
+        )
+        print(f"{c.DIM}{counts}{c.RESET}\n", file=sys.stderr)
+
+    if not failures:
+        print(f"{c.GREEN}✓ No failed or broken tests.{c.RESET}", file=sys.stderr)
+        return 0
+
+    for i, result in enumerate(failures, 1):
+        status = result.get("status", "?")
+        color = c.RED if status == "failed" else c.YELLOW
+        print(
+            f"{c.DIM}{i}.{c.RESET} {color}[{status}]{c.RESET} {c.BOLD}{result.get('name', '')}{c.RESET}"
+        )
+        if result.get("fullName"):
+            print(f"   {c.DIM}└─ {result['fullName']}{c.RESET}")
+        duration = result.get("duration")
+        took = f" · {duration / 1000:.1f}s" if duration else ""
+        print(
+            f"   {c.DIM}result {c.RESET}{c.BLUE}{result['id']}{c.RESET}{c.DIM}{took}{c.RESET}"
+        )
+        text = result.get("trace") if args.trace else result.get("message")
+        for line in (text or "").rstrip().splitlines():
+            print(f"   {line}")
+        if "_attachments" in result:
+            print(
+                f"   {c.DIM}attachments: {len(result['_attachments'])} → "
+                f"{Path(args.download) / str(result['id'])}{c.RESET}"
+            )
+        print()
+    return 0
+
+
+def _attachments_command(args) -> int:
+    """Handle attachments command."""
+    error = _check_connection_args(args, project=False)
+    if error:
+        print(error, file=sys.stderr)
+        return 2
+
+    try:
+        attachments = get_test_result_attachments(args.url, args.token, args.result_id)
+        paths = (
+            _save_attachments(args.url, args.token, attachments, Path(args.download))
+            if args.download
+            else None
+        )
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        items = [
+            {k: a.get(k) for k in ("id", "name", "contentType", "contentLength")}
+            for a in attachments
+        ]
+        if paths is not None:
+            for item, path in zip(items, paths):
+                item["path"] = path
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+        return 0
+
+    c = _colors(args.no_color)
+    if not attachments:
+        print(
+            f"{c.YELLOW}No attachments for result {args.result_id}{c.RESET}",
+            file=sys.stderr,
+        )
+        return 0
+
+    for i, attachment in enumerate(attachments):
+        where = f"\t{c.DIM}→ {paths[i]}{c.RESET}" if paths is not None else ""
+        kind = attachment.get("contentType", "?")
+        size = attachment.get("contentLength", "?")
+        print(
+            f"ID {c.BLUE}{attachment['id']}{c.RESET}\t"
+            f"{c.DIM}{kind}\t{size} B{c.RESET}\t"
+            f"{c.CYAN}{attachment.get('name', '')}{c.RESET}{where}"
+        )
     return 0
 
 
